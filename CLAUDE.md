@@ -101,6 +101,22 @@ the emitted function rather than syntax-checking it — `zsh -n` is perfectly ha
 with a function that cds into a help page. There are tests now that install the
 function in zsh, bash and fish and run `--version` and `--help` through it.
 
+### I8c. The install snippet must say `command`
+
+The emitted function shares its name with the binary, so `eval "$(gwqpull --init
+zsh)"` in `~/.zshrc` resolves to the *function* on every re-source after the
+first. A stale function then captures the `--init` output and hands it to `cd`:
+
+    gwqcd:cd:5: no such file or directory: # gwqcd 0.2.1 — zsh integration\n…
+
+Reported by a user running `source ~/.zshrc` after an upgrade. `command` skips
+functions and goes to PATH, which makes re-sourcing idempotent no matter what is
+already defined. The npx form (`eval "$(npx -y gwqpull --init zsh)"`) never had the
+problem, because npx is not the function.
+
+The generated snippet's own header comment shows the `command` form too — it is
+the line people copy.
+
 ### I6. Never `ghq get -u` on an existing clone
 
 `ghq get -u` runs `git pull --ff-only` internally, which fails outright when the

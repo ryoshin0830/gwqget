@@ -28,14 +28,18 @@ Then add the shell integration:
 
 ```sh
 # zsh  — ~/.zshrc
-eval "$(gwqpull --init zsh)"
+eval "$(command gwqpull --init zsh)"
 
 # bash — ~/.bashrc
-eval "$(gwqpull --init bash)"
+eval "$(command gwqpull --init bash)"
 
 # fish — ~/.config/fish/config.fish
-gwqpull --init fish | source
+command gwqpull --init fish | source
 ```
+
+`command` matters: each tool defines a shell function with its own name, so on a
+second `source ~/.zshrc` the *function* would answer, capture the `--init` output
+and try to `cd` into it. `command` skips functions and goes to the binary.
 
 Reload the shell and `gwqpull` moves it.
 
