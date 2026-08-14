@@ -159,6 +159,7 @@ not be able to act on anyway, and `-n --json` still reports everything.
 
 - [`ghqcd`](https://github.com/ryoshin0830/ghqcd) — pick a ghq repository with fzf and cd into it
 - [`gwqcd`](https://github.com/ryoshin0830/gwqcd) — pick an existing gwq worktree with fzf and cd into it
+- [`gwqadd`](https://github.com/ryoshin0830/gwqadd) — create a branch and its gwq worktree in the repo you are in
 - [`ghnew`](https://github.com/ryoshin0830/ghnew) — create a GitHub repo, ghq-get it, and cd into it
 
 ## License
