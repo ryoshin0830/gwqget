@@ -242,6 +242,18 @@ __${slug}_exec() {
 # ${desc}.
 ${fnName}() {
   emulate -L zsh
+  # These print to stdout for the caller — help text, a list, JSON — and one of
+  # them, --json, would collide with the --quiet added below. Capturing that and
+  # handing it to cd produced "file name too long" on --help. Pass them through.
+  local __a
+  for __a in "$@"; do
+    case $__a in
+      -h|--help|-V|--version|--init|--init=*|--json)
+        __${slug}_exec "$@"
+        return $?
+        ;;
+    esac
+  done
   local __dir
   __dir=$(__${slug}_exec --quiet "$@") || return $?
   # Empty is not a failure: --no-cd, --help and --version all succeed without
@@ -272,6 +284,18 @@ __${slug}_exec() {
 
 # ${desc}.
 ${fnName}() {
+  # These print to stdout for the caller — help text, a list, JSON — and one of
+  # them, --json, would collide with the --quiet added below. Capturing that and
+  # handing it to cd produced "file name too long" on --help. Pass them through.
+  local __a
+  for __a in "$@"; do
+    case "$__a" in
+      -h|--help|-V|--version|--init|--init=*|--json)
+        __${slug}_exec "$@"
+        return $?
+        ;;
+    esac
+  done
   local __dir
   __dir=$(__${slug}_exec --quiet "$@") || return $?
   [ -n "$__dir" ] || return 0
@@ -298,6 +322,15 @@ function __${slug}_exec
 end
 
 function ${fnName} --description ${fishq(desc)}
+    # Help text, a list or JSON goes to the caller, not to cd. --json would also
+    # collide with the --quiet added below.
+    for __a in $argv
+        switch $__a
+            case -h --help -V --version --init '--init=*' --json
+                __${slug}_exec $argv
+                return $status
+        end
+    end
     set -l __dir (__${slug}_exec --quiet $argv)
     # \`set\` reports the command substitution's status, but not every fish
     # release agrees on that. Capturing it keeps a failed run from cd'ing,

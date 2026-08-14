@@ -61,8 +61,13 @@ mode must emit **nothing at all**, not the path — otherwise the wrapper follow
 it and `--no-cd` does the opposite of what it says. In `--json`, `-n` is
 reported as `"cd": false` and the path stays in the payload.
 
-The generated function treats empty stdout as success, so `-n`, `--help` and
-`--version` all return 0 without moving the shell.
+The generated function treats empty stdout as success, so `-n` returns 0 without
+moving the shell.
+
+`--help` and `--version` are a different matter, and this file claimed they were
+fine when they were not: they print *to stdout*, so the function captured the
+text and fed it to `cd` — `--version` produced "no such file or directory:
+gwqpull 0.1.2" and `--help` produced "file name too long". See I8b.
 
 ### I4. `--init` is a flag, not a subcommand
 
@@ -84,6 +89,17 @@ zoxide.
 The lookup MUST be PATH-only (`whence -p` / `type -P` / `command -s`). The
 emitted function shares its name with the binary by default, so a
 function-aware lookup finds the function and recurses until the shell dies.
+
+### I8b. The function must not capture output that is not a path
+
+Every flag whose result goes to stdout has to be passed through uncaptured:
+`-h`, `--help`, `-V`, `--version`, `--init`, `--json`. The wrapper adds
+`--quiet`, so `--json` would additionally collide with it and error out.
+
+This shipped broken in every one of these packages and was only found by running
+the emitted function rather than syntax-checking it — `zsh -n` is perfectly happy
+with a function that cds into a help page. There are tests now that install the
+function in zsh, bash and fish and run `--version` and `--help` through it.
 
 ### I6. Never `ghq get -u` on an existing clone
 
