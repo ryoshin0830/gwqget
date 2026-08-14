@@ -120,11 +120,21 @@ after(() => {
 });
 
 function run(args, { env = {} } = {}) {
-  return spawnSync(process.execPath, [BIN, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}`, NO_COLOR: '1', ...env },
-  });
+  const childEnv = {
+    ...process.env, PATH: `${shimDir}:${process.env.PATH}`, NO_COLOR: '1', ...env,
+  };
+  // We force NO_COLOR; node itself warns to stderr when FORCE_COLOR is also
+  // set, so a developer who exports it would otherwise see phantom failures.
+  delete childEnv.FORCE_COLOR;
+  return spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8', env: childEnv });
 }
+
+// stderr is shared, not ours alone: node emits its own warnings there. Strip
+// them before asserting the program itself stayed silent.
+const ourStderr = (s) =>
+  s.split('\n')
+    .filter((l) => l && !/^\(node:\d+\)/.test(l) && !/^\(Use `node --trace-warnings/.test(l))
+    .join('\n');
 
 const out = (r) => {
   assert.equal(r.status, 0, `exit ${r.status}\n${r.stderr}`);
@@ -148,7 +158,7 @@ for (const shell of ['zsh', 'bash', 'fish']) {
     assert.match(r.stdout, /--quiet/);
     assert.match(r.stdout, /npx -y/);
     assert.ok(r.stdout.includes(BIN));
-    assert.equal(r.stderr, '');
+    assert.equal(ourStderr(r.stderr), '');
   });
 }
 

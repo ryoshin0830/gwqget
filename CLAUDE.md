@@ -245,9 +245,18 @@ existing / origin-only / brand-new branches, idempotent re-runs, the I8
 main-clone case, the I10 collision paths (both with and without `-f`, asserting
 the stray file survives inside the backup), and the I1/I3 stdout contract.
 
-Note for anyone adding tests: realpath the sandbox root. macOS `$TMPDIR` is
-`/var/...` symlinked to `/private/var/...`, git reports the resolved form, and
-unresolved expectations will never match.
+Two traps for anyone adding tests:
+
+- **Realpath the sandbox root.** macOS `$TMPDIR` is `/var/...` symlinked to
+  `/private/var/...`, git reports the resolved form, and unresolved
+  expectations will never match.
+- **Stay hermetic against the developer's own environment.** `run()` deletes
+  `FORCE_COLOR` from the child env because we set `NO_COLOR`, and node warns to
+  stderr when it sees both — which made the suite fail on a machine that
+  exported `FORCE_COLOR`, and only at `npm publish` time via `prepublishOnly`.
+  Assertions that stderr is empty go through `ourStderr()`, which strips
+  `(node:NNN) Warning:` lines first. Never assert on raw `r.stderr` being `''`:
+  stderr is a shared stream, and node's warnings are not ours to control.
 
 Not covered — run by hand:
 
