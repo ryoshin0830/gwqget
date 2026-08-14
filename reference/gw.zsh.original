@@ -1,0 +1,273 @@
+#!/usr/bin/env zsh
+# gw — ghq clone + gwq worktree + cd を一発で行う
+#
+#   gw <repo|URL|PR-URL> [branch]
+#
+# 例:
+#   gw https://git.pepabo.com/hosting/lolipop.rb feat/foo
+#   gw https://git.pepabo.com/hosting/lolipop.rb/pull/2338   # PR の head ブランチを解決
+#   gw hosting/lolipop.rb feat/foo                           # 既存 clone から host を推測
+#   gw https://git.pepabo.com/hosting/muu                    # branch 省略 → fzf で選択
+#
+# 設計方針:
+#   - 何度実行しても同じ結果に着地する（clone 済み・branch 済み・worktree 済みでも失敗しない）
+#   - clone 済みの場合 `ghq get -u` は使わない。あれは内部で `git pull --ff-only` を撃つため
+#     main clone が dirty / 分岐していると落ちる。代わりに working tree に触らない
+#     `git fetch --prune` だけを行う。
+#   - 目的ブランチの worktree（または main clone の checkout）が既にある場合は
+#     origin/<branch> へ ff-only で追随させる（pull 相当）。ff できなければ警告のみ。
+#   - `gwq add` は cwd のリポジトリしか見ないのでサブシェルで cd して呼ぶ
+#   - cd 先は gwq の naming template を再実装せず `git worktree list --porcelain` から引く
+
+# ---- 内部ヘルパー ----------------------------------------------------------
+
+# URL / 短縮形をパースして _gw_host / _gw_owner / _gw_repo / _gw_pr / _gw_hint を立てる
+_gw_parse_spec() {
+  local s=$1
+  _gw_host='' _gw_owner='' _gw_repo='' _gw_pr='' _gw_hint=''
+
+  s=${s%%\#*}   # フラグメント除去
+  s=${s%%\?*}   # クエリ除去
+
+  # scp 形式 (git@host:owner/repo.git) を https 相当の形に寄せる。
+  # github.com への SSH は現状 publickey で弾かれるため https に統一する。
+  if [[ $s != *://* && $s == *:*/* ]]; then
+    local hp=${s#*@}; hp=${hp%%:*}
+    s="https://${hp}/${s#*:}"
+  fi
+
+  s=${s#*://}                                  # スキーム除去
+  [[ ${s%%/*} == *@* ]] && s=${s#*@}           # userinfo (git@) 除去
+  s=${s%/}                                     # 末尾スラッシュ
+
+  local -a parts; parts=(${(s:/:)s})
+  local -a rest
+
+  if [[ ${parts[1]} == *.* || ${parts[1]} == localhost ]]; then
+    # host/owner/repo/...
+    (( ${#parts} >= 3 )) || { print -u2 "gw: リポジトリを特定できません: $1"; return 1 }
+    _gw_host=${parts[1]} _gw_owner=${parts[2]} _gw_repo=${parts[3]}
+    rest=(${parts[4,-1]})
+  else
+    # owner/repo/... （host 省略）
+    (( ${#parts} >= 2 )) || { print -u2 "gw: owner/repo の形で指定してください: $1"; return 1 }
+    _gw_owner=${parts[1]} _gw_repo=${parts[2]}
+    rest=(${parts[3,-1]})
+    # 既に clone 済みなら、その host を採用する（社内 GHE を短縮形で叩けるように）
+    local known=${$(ghq list -e "${_gw_owner}/${_gw_repo}" 2>/dev/null)[(f)1]}
+    if [[ -n $known ]]; then
+      _gw_host=${${(s:/:)known}[1]}
+    else
+      _gw_host=github.com
+    fi
+  fi
+
+  _gw_repo=${_gw_repo%.git}
+
+  # URL 末尾から PR 番号 / ブランチ名を拾う
+  case ${rest[1]:-} in
+    pull|pulls) [[ ${rest[2]:-} == <-> ]] && _gw_pr=${rest[2]} ;;
+    tree)       (( ${#rest} >= 2 )) && _gw_hint=${(j:/:)rest[2,-1]} ;;
+  esac
+  return 0
+}
+
+# ブランチに対応する worktree のパスを返す（無ければ空）
+_gw_wt_path() {
+  git -C "$1" worktree list --porcelain 2>/dev/null | awk -v br="refs/heads/$2" '
+    /^worktree /{p = substr($0, 10)}
+    $0 == "branch " br {print p; exit}'
+}
+
+_gw_has_local()  { git -C "$1" show-ref --verify --quiet "refs/heads/$2"; }
+_gw_has_remote() { git -C "$1" show-ref --verify --quiet "refs/remotes/origin/$2"; }
+
+# 既存の checkout に origin/<branch> を --ff-only で取り込む（pull 相当）。
+# fetch は本体ステップ1で済んでいるので merge だけ行う。
+# dirty / 分岐で ff できない場合は警告だけ出して続行する（作業を壊さない）。
+_gw_pull_ff() {  # $1=worktree path  $2=branch
+  _gw_has_remote "$1" "$2" || return 0   # origin に無いブランチ (pr-N など) は何もしない
+  local out
+  if out=$(git -C "$1" merge --ff-only "origin/$2" 2>&1); then
+    [[ $out == *"Already up to date"* ]] \
+      || print -r -- "gw: pull しました (origin/${2} に ff)"
+  else
+    print -u2 "gw: warning: origin/${2} に ff できませんでした（分岐 or 未コミットの変更あり）。手動で pull してください"
+  fi
+}
+
+# ---- 本体 -----------------------------------------------------------------
+
+gw() {
+  emulate -L zsh
+  setopt local_options
+
+  local do_fetch=1 do_submodules=1 force=0 stay_out=0
+  local -a positional
+  while (( $# )); do
+    case $1 in
+      --no-fetch)       do_fetch=0 ;;
+      --no-submodules)  do_submodules=0 ;;
+      -f|--force)       force=1 ;;
+      -n|--no-cd)       stay_out=1 ;;
+      -h|--help)
+        print -r -- 'usage: gw <repo|URL|PR-URL> [branch] [--no-fetch] [--no-submodules] [-f] [-n]'
+        print -r -- '  branch 省略時は fzf でブランチを選択（PR URL の場合は PR の head を使用）'
+        return 0 ;;
+      --) shift; positional+=("$@"); break ;;
+      -*) print -u2 "gw: 不明なオプション: $1"; return 2 ;;
+      *)  positional+=("$1") ;;
+    esac
+    shift
+  done
+
+  if (( ${#positional} == 0 )); then
+    print -u2 'gw: リポジトリ (URL / owner/repo / PR URL) を指定してください'
+    return 2
+  fi
+
+  local _gw_host _gw_owner _gw_repo _gw_pr _gw_hint
+  _gw_parse_spec "${positional[1]}" || return 1
+
+  local branch=${positional[2]:-$_gw_hint}
+  local slug="${_gw_host}/${_gw_owner}/${_gw_repo}"
+  local url="https://${slug}"
+  local dir="$(ghq root)/${slug}"
+
+  # ---- 1. clone（無ければ）/ fetch（あれば） ----
+  if git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    print -r -- "gw: clone あり  $dir"
+    if (( do_fetch )); then
+      # working tree には触らないので dirty でも安全。失敗しても続行する。
+      git -C "$dir" fetch --prune --quiet origin \
+        || print -u2 "gw: warning: fetch に失敗しました（ローカルの ref だけで続行します）"
+    fi
+  else
+    print -r -- "gw: clone します  $url"
+    ghq get "$url" || { print -u2 "gw: clone に失敗しました: $url"; return 1 }
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 \
+      || { print -u2 "gw: clone 先が見つかりません: $dir"; return 1 }
+  fi
+
+  # ---- 2. PR URL ならブランチを解決 ----
+  if [[ -n $_gw_pr ]]; then
+    local pr_json
+    pr_json=$(gh pr view "${url}/pull/${_gw_pr}" \
+                --json headRefName,isCrossRepository,state,title 2>&1) \
+      || { print -u2 "gw: PR #${_gw_pr} を解決できません（gh auth login --hostname ${_gw_host} 済みか確認）"
+           print -u2 "    $pr_json"; return 1 }
+
+    local head_ref cross state title
+    head_ref=$(print -r -- "$pr_json" | jq -r '.headRefName')
+    cross=$(print -r -- "$pr_json"    | jq -r '.isCrossRepository')
+    state=$(print -r -- "$pr_json"    | jq -r '.state')
+    title=$(print -r -- "$pr_json"    | jq -r '.title')
+    print -r -- "gw: PR #${_gw_pr} [${state}] ${title}"
+
+    # PR の head ref も取っておく（fork / head ブランチ削除済みでも辿れるように）
+    if (( do_fetch )); then
+      git -C "$dir" fetch --quiet origin "refs/pull/${_gw_pr}/head" 2>/dev/null
+    fi
+
+    if [[ $cross == true ]]; then
+      # fork からの PR。head は origin に無いので refs/pull/N/head から pr-N を作る。
+      branch="pr-${_gw_pr}"
+      if ! _gw_has_local "$dir" "$branch"; then
+        git -C "$dir" fetch origin "refs/pull/${_gw_pr}/head" >/dev/null 2>&1 \
+          && git -C "$dir" branch --quiet "$branch" FETCH_HEAD \
+          || { print -u2 "gw: refs/pull/${_gw_pr}/head を取得できません"; return 1 }
+      fi
+      print -u2 "gw: note: fork の PR なので upstream 未設定です（push には fork の remote 追加が必要）"
+    elif _gw_has_local "$dir" "$head_ref" || _gw_has_remote "$dir" "$head_ref"; then
+      branch=$head_ref
+    else
+      # head ブランチが remote から消えている（マージ後など）
+      branch="pr-${_gw_pr}"
+      if ! _gw_has_local "$dir" "$branch"; then
+        git -C "$dir" fetch origin "refs/pull/${_gw_pr}/head" >/dev/null 2>&1 \
+          && git -C "$dir" branch --quiet "$branch" FETCH_HEAD \
+          || { print -u2 "gw: ${head_ref} も refs/pull/${_gw_pr}/head も見つかりません"; return 1 }
+      fi
+      print -u2 "gw: note: ${head_ref} は remote に無いため ${branch} として取得しました"
+    fi
+  fi
+
+  # ---- 3. ブランチ未指定なら fzf で選ぶ ----
+  if [[ -z $branch ]]; then
+    branch=$(git -C "$dir" for-each-ref --format='%(refname:short)' \
+                 refs/heads refs/remotes/origin \
+             | sed 's|^origin/||' | grep -vx 'HEAD' | awk '!seen[$0]++' \
+             | fzf --height=40% --layout=reverse --border --prompt='branch> ') || return 1
+    [[ -n $branch ]] || return 1
+  fi
+
+  # ---- 4. 既に worktree があれば ff-only pull してそこへ行く ----
+  # 既存 worktree に対しては gwq add を一切呼ばない（作業中の変更を壊さないため）。
+  # origin に追随できる場合だけ ff で進め、できなければ警告して続行する。
+  git -C "$dir" worktree prune 2>/dev/null   # 手で消された worktree の残骸を掃除
+  local wt created=0
+  wt=$(_gw_wt_path "$dir" "$branch")
+  if [[ -n $wt && -d $wt ]]; then
+    print -r -- "gw: worktree あり  $wt"
+    (( do_fetch )) && _gw_pull_ff "$wt" "$branch"
+  elif [[ "$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)" == "$branch" ]]; then
+    # main clone 自身がそのブランチを持っている場合（worktree は作れない）
+    print -r -- "gw: main clone が ${branch} を checkout 済みです  $dir"
+    wt=$dir
+    (( do_fetch )) && _gw_pull_ff "$wt" "$branch"
+  else
+    # ---- 5. worktree を作る。branch の実体に応じて -b を自動で決める ----
+    # gwq v0.1.1 の -f は git worktree add に転送されないので、衝突処理は自前で行う。
+    local -a add_args
+    if _gw_has_local "$dir" "$branch" || _gw_has_remote "$dir" "$branch"; then
+      add_args=("$branch")                      # 既存 / origin 追跡 → そのまま
+    else
+      add_args=(-b "$branch")                   # 完全に新規 → -b が必要
+      print -r -- "gw: 新規ブランチとして作成します: ${branch}"
+    fi
+
+    local out rc
+    out=$( (cd "$dir" && gwq add "${add_args[@]}") 2>&1 ); rc=$?
+    if (( rc != 0 )); then
+      # gwq のエラー文には実行された git コマンドが入るので、宛先パスをそこから拾う
+      local collide
+      collide=$(print -r -- "$out" \
+        | sed -n 's|.*git worktree add \(-b [^ ]* \)\{0,1\}\(/[^ :]*\).*|\2|p' | head -1)
+
+      if [[ -n $collide && -e $collide ]] && (( force )); then
+        local aside="${collide}.bak-$(date +%Y%m%d%H%M%S)"
+        print -u2 "gw: ${collide} が既に存在するので退避します → ${aside}"
+        mv -- "$collide" "$aside" || { print -u2 'gw: 退避に失敗しました'; return 1 }
+        out=$( (cd "$dir" && gwq add "${add_args[@]}") 2>&1 ); rc=$?
+      fi
+
+      if (( rc != 0 )); then
+        wt=$(_gw_wt_path "$dir" "$branch")      # 既に張られていたなら続行できる
+        if [[ -z $wt || ! -d $wt ]]; then
+          print -u2 "gw: worktree を作成できませんでした"
+          # gwq の usage 全文は邪魔なので Error 行だけ見せる
+          print -r -- "$out" | sed -n '/^Error:/p;/^fatal:/p' | sed 's/^/    /' >&2
+          if [[ -n $collide && -e $collide ]]; then
+            print -u2 "    宛先 ${collide} に $(command ls -A -- "$collide" | wc -l | tr -d ' ') 件のファイルが残っています"
+            print -u2 "    中身を確認して消すか、gw ... -f で退避させてください"
+          fi
+          return 1
+        fi
+      fi
+    fi
+    [[ -n $out ]] && print -r -- "$out"
+    wt=$(_gw_wt_path "$dir" "$branch")
+    [[ -n $wt && -d $wt ]] || { print -u2 "gw: worktree のパスを特定できませんでした"; return 1 }
+  fi
+
+  # ---- 6. submodule を展開（git worktree add はここまでやってくれない） ----
+  if (( do_submodules )) && [[ -f "$wt/.gitmodules" ]]; then
+    print -r -- 'gw: submodule を初期化します'
+    git -C "$wt" submodule update --init --recursive \
+      || print -u2 'gw: warning: submodule の初期化に失敗しました'
+  fi
+
+  # ---- 7. 移動 ----
+  print -r -- "gw: → $wt"
+  (( stay_out )) || cd "$wt"
+}

@@ -1,2 +1,166 @@
 # gwqget
-Clone with ghq, add a gwq worktree, and cd into it — in one shot.
+
+Clone with [ghq](https://github.com/x-motemen/ghq), add a [gwq](https://github.com/d-kuro/gwq) worktree, and `cd` into it — in one shot.
+
+```console
+$ gwqget https://github.com/cli/cli/pull/9421
+┌ gwqget github.com/cli/cli
+│ cloning  https://github.com/cli/cli
+│ PR #9421 [OPEN] Add --json to gh run view
+│ creating a new branch  feat/run-view-json
+│ Created worktree at /Users/you/worktrees/github.com/cli/cli/feat-run-view-json
+└ ✓ feat/run-view-json → /Users/you/worktrees/github.com/cli/cli/feat-run-view-json
+
+$ pwd
+/Users/you/worktrees/github.com/cli/cli/feat-run-view-json
+```
+
+One command replaces: figure out the URL → `ghq get` → `git fetch` → work out
+what the PR's head branch is called → `gwq add` → `git submodule update` → `cd`.
+
+## Install
+
+```sh
+npm install -g gwqget
+```
+
+Then add the shell integration:
+
+```sh
+# zsh  — ~/.zshrc
+eval "$(gwqget --init zsh)"
+
+# bash — ~/.bashrc
+eval "$(gwqget --init bash)"
+
+# fish — ~/.config/fish/config.fish
+gwqget --init fish | source
+```
+
+Reload the shell and `gwqget` moves it.
+
+Prefer a different name? `eval "$(gwqget --init zsh --cmd gw)"` gives you `gw`.
+
+### Without installing
+
+```sh
+eval "$(npx -y gwqget --init zsh)"
+```
+
+The emitted function resolves its binary in three steps — `gwqget` on `PATH`,
+then the script that generated the snippet, then `npx -y gwqget@<version>` — so
+it keeps working after npm garbage-collects the npx cache.
+
+Requires `git`, `ghq`, `gwq` and `fzf` on `PATH`, plus `gh` for PR URLs
+(`brew install git ghq fzf gh d-kuro/tap/gwq`), and Node >= 20.12.
+**No `jq`** — `gh --json` is parsed in-process.
+
+## Repository spec
+
+| You type | It means |
+| --- | --- |
+| `cli/cli` | host inferred from an existing clone via `ghq list -e`, else `github.com` |
+| `github.com/cli/cli` | explicit host |
+| `https://github.com/cli/cli` | full URL |
+| `git@github.com:cli/cli.git` | scp form, normalised to https |
+| `https://github.com/cli/cli/tree/trunk` | branch taken from the URL |
+| `https://github.com/cli/cli/pull/42` | branch taken from the PR's head ref |
+
+Query strings and fragments are stripped, so pasting a URL straight out of the
+browser works.
+
+Omit the branch and fzf offers every local and origin branch.
+
+## What it does
+
+1. **Clone or fetch.** `ghq get` if the repository is not on disk; otherwise
+   `git fetch --prune`.
+2. **Resolve the branch** — from the argument, the URL, the PR head, or fzf.
+3. **Land on a worktree.** Reuse an existing one (fast-forwarding it), else
+   `gwq add`, creating the branch when it does not exist yet.
+4. **Initialise submodules** when the tree has any — `git worktree add` does not.
+5. **Hand the path back** so the shell can `cd` there.
+
+Re-running is safe. Every step lands in the same place whether or not the clone,
+the branch and the worktree already existed.
+
+### It will not eat your work
+
+- An existing clone gets `git fetch --prune`, never `ghq get -u` — that runs
+  `git pull --ff-only` internally and fails on a dirty or diverged main clone.
+- An existing worktree is never handed to `gwq add`. It gets a `--ff-only`
+  merge, and a divergence or a dirty tree is a warning, not a rewrite.
+- A colliding directory is only touched with `-f`, and then it is **moved** to
+  `<path>.bak-<timestamp>`, never deleted.
+
+## Usage
+
+```
+gwqget [options] <repo|URL|PR-URL> [branch]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--init <shell>` | print shell integration for `zsh` \| `bash` \| `fish` |
+| `--cmd <name>` | function name emitted by `--init` (default: `gwqget`) |
+| `--no-fetch` | skip `git fetch` and the ff-only catch-up |
+| `--no-submodules` | skip `git submodule update --init --recursive` |
+| `-f`, `--force` | move a colliding worktree directory aside instead of failing |
+| `-n`, `--no-cd` | do the work and report the path, but do not move the shell |
+| `--json` | stdout = 1-line JSON |
+| `--quiet` | stdout = path only |
+| `--no-color` | disable ANSI colors (also respects `NO_COLOR`) |
+| `-h`, `--help` | show help |
+| `-V`, `--version` | show version |
+
+### Pull requests
+
+PR URLs cover the three shapes that actually happen:
+
+- **same-repo PR** → its head ref is checked out
+- **fork PR** → the head is not on origin, so `refs/pull/N/head` becomes a local
+  `pr-N` branch (with a warning that pushing needs the fork as a remote)
+- **merged PR whose branch was deleted** → same `pr-N` fallback
+
+## For scripts and AI agents
+
+```console
+$ gwqget --json -n cli/cli trunk
+{"schemaVersion":1,"path":"/Users/you/ghq/github.com/cli/cli","branch":"trunk","clone":"/Users/you/ghq/github.com/cli/cli","repo":{"host":"github.com","owner":"cli","name":"cli","slug":"github.com/cli/cli","url":"https://github.com/cli/cli"},"pr":null,"created":false,"isMainClone":true,"cd":false}
+```
+
+`created` says whether this run made the worktree; `isMainClone` says the branch
+was already checked out in the main clone, so no worktree was needed.
+
+Progress narrates on stderr, so stdout stays parseable. Errors go to stderr as
+JSON with stdout empty:
+
+```console
+$ gwqget --json nobody/nothing
+{"schemaVersion":1,"error":{"code":"E_CLONE","message":"ghq get failed for https://github.com/nobody/nothing"},"exitCode":1}
+```
+
+| Exit | Code | Meaning |
+| --- | --- | --- |
+| 0 | — | success |
+| 1 | `E_VALIDATION` | bad flags or too many arguments |
+| 1 | `E_SPEC` | the repository spec could not be parsed |
+| 1 | `E_CLONE` | `ghq get` failed, or the clone did not land where expected |
+| 1 | `E_PR` | `gh pr view` failed, or the head could not be materialised |
+| 1 | `E_BRANCH` | no branch given and no terminal for the picker |
+| 1 | `E_WORKTREE` | `gwq add` failed (see the message for collisions) |
+| 127 | `E_DEPS` | `git`, `ghq`, `gwq`, `fzf` or `gh` not installed |
+| 130 | `E_INTERRUPTED` | Esc or Ctrl-C |
+
+Use `-n` in an agent session: without it the tool prints a path your harness may
+not be able to act on anyway, and `-n --json` still reports everything.
+
+## Related
+
+- [`ghqcd`](https://github.com/ryoshin0830/ghqcd) — pick a ghq repository with fzf and cd into it
+- [`gwqcd`](https://github.com/ryoshin0830/gwqcd) — pick an existing gwq worktree with fzf and cd into it
+- [`ghnew`](https://github.com/ryoshin0830/ghnew) — create a GitHub repo, ghq-get it, and cd into it
+
+## License
+
+MIT © ryoshin0830

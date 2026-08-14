@@ -1,0 +1,42 @@
+{
+  "name": "gwqget",
+  "version": "0.1.0",
+  "description": "Clone with ghq, add a gwq worktree, and cd into it — in one shot.",
+  "type": "module",
+  "bin": {
+    "gwqget": "bin/gwqget.mjs"
+  },
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "files": [
+    "bin",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "gwq",
+    "ghq",
+    "git",
+    "worktree",
+    "clone",
+    "pull-request",
+    "fzf",
+    "cd",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "ryoshin0830",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryoshin0830/gwqget.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ryoshin0830/gwqget/issues"
+  },
+  "homepage": "https://github.com/ryoshin0830/gwqget#readme",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm test && npm pack --dry-run && node bin/gwqget.mjs --help"
+  }
+}
