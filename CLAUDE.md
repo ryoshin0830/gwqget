@@ -3,8 +3,8 @@
 Guidance for any AI agent (Claude Code, Codex, opencode, etc.) that works
 **inside** this repository.
 
-This file is for **maintainers of `gwqget`**. To USE gwqget from an agent
-session, see `.claude/skills/gwqget/SKILL.md` and the "For scripts and AI
+This file is for **maintainers of `gwqpull`**. To USE gwqpull from an agent
+session, see `.claude/skills/gwqpull/SKILL.md` and the "For scripts and AI
 agents" section of `README.md` instead.
 
 ---
@@ -21,7 +21,7 @@ missing along the way:
 4. `git submodule update --init --recursive` when `.gitmodules` exists.
 5. Print the path; `--init <shell>` emits a function so the *shell* cds.
 
-Single source of behavior: `bin/gwqget.mjs`.
+Single source of behavior: `bin/gwqpull.mjs`.
 
 `reference/gw.zsh.original` is the zsh function this was ported from, kept for
 provenance. It is excluded from the tarball. When a behavioural question comes
@@ -41,7 +41,7 @@ Sibling packages built to the same contract: `ghqcd`, `gwqcd`, `ghnew`.
 - **stderr** carries everything else — and here that is a lot: clone progress,
   fetch output, the PR summary, `gwq add`'s report, warnings, the `cd` box.
 
-This matters more in gwqget than in its siblings, because gwqget spawns
+This matters more in gwqpull than in its siblings, because gwqpull spawns
 children that are chatty. Every child gets `stdio: ['inherit', 2, 'inherit']`
 — fd 1 folded onto **our stderr** — so `ghq get`'s progress can never end up
 inside the path the shell function is about to `cd` into. Never give a child
@@ -66,7 +66,7 @@ The generated function treats empty stdout as success, so `-n`, `--help` and
 
 ### I4. `--init` is a flag, not a subcommand
 
-`gwqget init zsh` is ambiguous — the first positional is a repository spec, so
+`gwqpull init zsh` is ambiguous — the first positional is a repository spec, so
 `init` would be parsed as a repo and `zsh` as a branch. This is the reason all
 four tools in the family spell it `--init <shell>`. Do not "fix" this to match
 zoxide.
@@ -74,10 +74,10 @@ zoxide.
 ### I5. The generated function resolves its binary in three steps
 
 `PATH` → the absolute path of the script that generated the snippet →
-`npx -y gwqget@<version>`. Each step exists for a reason:
+`npx -y gwqpull@<version>`. Each step exists for a reason:
 
 - **PATH first** so a global install wins and picks up upgrades.
-- **Baked path second** so `eval "$(npx -y gwqget --init zsh)"` works at all.
+- **Baked path second** so `eval "$(npx -y gwqpull --init zsh)"` works at all.
 - **npx last** because npm garbage-collects `~/.npm/_npx/<hash>/`, and without
   this step the user's shell silently loses the command.
 
@@ -221,11 +221,11 @@ npm pack --dry-run          # must not contain .claude/, CLAUDE.md, test/, refer
 npm version patch           # or minor / major — commits and tags
 git push --follow-tags
 npm publish                 # prompts for passkey/OTP via the npm web auth flow
-npm view gwqget version
-npx -y gwqget@latest --version
+npm view gwqpull version
+npx -y gwqpull@latest --version
 ```
 
-`prepublishOnly` runs `npm test && npm pack --dry-run && node bin/gwqget.mjs --help`.
+`prepublishOnly` runs `npm test && npm pack --dry-run && node bin/gwqpull.mjs --help`.
 
 Publishing needs `registry.npmjs.org` credentials. If the machine's `.npmrc`
 points `registry=` at a private mirror, publish with
@@ -262,16 +262,16 @@ Not covered — run by hand:
 
 | Scenario | Command | Expect |
 | --- | --- | --- |
-| Branch picker | `gwqget <repo>` | fzf lists local + origin branches |
-| Picker cancel | `gwqget <repo>`, Esc | exit 130, shell stays put |
-| Real clone | `gwqget cli/cli trunk` | clones from the network, lands in a worktree |
-| Same-repo PR | `gwqget <url>/pull/<n>` | head ref checked out |
-| Fork PR | `gwqget <fork-pr-url>` | `pr-N` branch, "no upstream" warning |
-| Deleted head PR | `gwqget <merged-pr-url>` | `pr-N` fallback with a note |
-| Submodules | `gwqget <repo-with-submodules>` | submodules populated |
+| Branch picker | `gwqpull <repo>` | fzf lists local + origin branches |
+| Picker cancel | `gwqpull <repo>`, Esc | exit 130, shell stays put |
+| Real clone | `gwqpull cli/cli trunk` | clones from the network, lands in a worktree |
+| Same-repo PR | `gwqpull <url>/pull/<n>` | head ref checked out |
+| Fork PR | `gwqpull <fork-pr-url>` | `pr-N` branch, "no upstream" warning |
+| Deleted head PR | `gwqpull <merged-pr-url>` | `pr-N` fallback with a note |
+| Submodules | `gwqpull <repo-with-submodules>` | submodules populated |
 | Dirty worktree | edit a file, re-run | warns, does not rewrite (I7) |
 | Diverged branch | commit locally, re-run | warns, does not rewrite (I7) |
-| npx one-shot | `npx gwqget <repo> <branch>` | box on terminal, `c` copies |
+| npx one-shot | `npx gwqpull <repo> <branch>` | box on terminal, `c` copies |
 
 Do **not** try to drive the interactive fzf picker by piping keystrokes into
 `script` — fzf reads `/dev/tty`, the writes do not reach it, and the harness
@@ -281,10 +281,10 @@ hangs until killed.
 
 ## Where things live
 
-- `bin/gwqget.mjs` — the entire CLI (ESM, top-level await OK).
-- `package.json` — `bin.gwqget`, `engines.node`, `files`, `prepublishOnly`.
+- `bin/gwqpull.mjs` — the entire CLI (ESM, top-level await OK).
+- `package.json` — `bin.gwqpull`, `engines.node`, `files`, `prepublishOnly`.
 - `.npmignore` — defense-in-depth complement to `files`.
-- `.claude/skills/gwqget/SKILL.md` — agent USE contract.
+- `.claude/skills/gwqpull/SKILL.md` — agent USE contract.
 - `README.md` — end-user docs.
 - `test/cli.test.mjs` — real-git sandbox tests.
 - `reference/gw.zsh.original` — the zsh function this was ported from.

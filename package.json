@@ -1,10 +1,10 @@
 {
-  "name": "gwqget",
+  "name": "gwqpull",
   "version": "0.1.0",
   "description": "Clone with ghq, add a gwq worktree, and cd into it — in one shot.",
   "type": "module",
   "bin": {
-    "gwqget": "bin/gwqget.mjs"
+    "gwqpull": "bin/gwqpull.mjs"
   },
   "engines": {
     "node": ">=20.12.0"
@@ -29,14 +29,14 @@
   "author": "ryoshin0830",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ryoshin0830/gwqget.git"
+    "url": "git+https://github.com/ryoshin0830/gwqpull.git"
   },
   "bugs": {
-    "url": "https://github.com/ryoshin0830/gwqget/issues"
+    "url": "https://github.com/ryoshin0830/gwqpull/issues"
   },
-  "homepage": "https://github.com/ryoshin0830/gwqget#readme",
+  "homepage": "https://github.com/ryoshin0830/gwqpull#readme",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "prepublishOnly": "npm test && npm pack --dry-run && node bin/gwqget.mjs --help"
+    "prepublishOnly": "npm test && npm pack --dry-run && node bin/gwqpull.mjs --help"
   }
 }

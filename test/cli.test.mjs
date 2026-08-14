@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'gwqget.mjs');
+const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'gwqpull.mjs');
 const SLUG = 'github.com/alice/api';
 
 let sandbox, ghqRoot, wtBase, originDir, shimDir;
@@ -28,7 +28,7 @@ before(() => {
   // realpath the sandbox: on macOS $TMPDIR is /var/... which is a symlink to
   // /private/var/..., and `git worktree list --porcelain` reports the resolved
   // form. Expectations built from an unresolved root would never match.
-  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'gwqget-')));
+  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'gwqpull-')));
   ghqRoot = join(sandbox, 'ghq');
   wtBase = join(sandbox, 'worktrees');
   originDir = join(sandbox, 'origin.git');
@@ -48,7 +48,7 @@ before(() => {
   git(seed, 'branch', 'feat/login');
   git(sandbox, 'clone', '-q', '--bare', seed, originDir);
 
-  shimDir = mkdtempSync(join(tmpdir(), 'gwqget-shims-'));
+  shimDir = mkdtempSync(join(tmpdir(), 'gwqpull-shims-'));
   const write = (name, body) => {
     const p = join(shimDir, name);
     writeFileSync(p, body);
@@ -154,7 +154,7 @@ for (const shell of ['zsh', 'bash', 'fish']) {
   test(`--init ${shell} emits a function and the three-step resolver`, () => {
     const r = run(['--init', shell]);
     assert.equal(r.status, 0);
-    assert.match(r.stdout, /gwqget/);
+    assert.match(r.stdout, /gwqpull/);
     assert.match(r.stdout, /--quiet/);
     assert.match(r.stdout, /npx -y/);
     assert.ok(r.stdout.includes(BIN));
@@ -341,7 +341,7 @@ test('--quiet prints the path and nothing else on stdout', () => {
   const r = run(['--quiet', '--no-fetch', 'alice/api', 'main']);
   assert.equal(r.status, 0);
   assert.equal(r.stdout.trim(), join(ghqRoot, SLUG));
-  assert.match(r.stderr, /gwqget/, 'progress still narrates on stderr in --quiet');
+  assert.match(r.stderr, /gwqpull/, 'progress still narrates on stderr in --quiet');
 });
 
 test('--no-cd prints nothing on stdout so the shell function stays put', () => {
@@ -361,7 +361,7 @@ test('progress never contaminates stdout', () => {
 // ── dependencies ─────────────────────────────────────────────────────────────
 
 test('a missing gwq exits 127 with the brew command', () => {
-  const bare = mkdtempSync(join(tmpdir(), 'gwqget-noshim-'));
+  const bare = mkdtempSync(join(tmpdir(), 'gwqpull-noshim-'));
   for (const n of ['git', 'ghq']) {
     writeFileSync(join(bare, n), '#!/bin/sh\nexit 0\n');
     chmodSync(join(bare, n), 0o755);

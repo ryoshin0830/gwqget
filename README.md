@@ -1,10 +1,10 @@
-# gwqget
+# gwqpull
 
 Clone with [ghq](https://github.com/x-motemen/ghq), add a [gwq](https://github.com/d-kuro/gwq) worktree, and `cd` into it — in one shot.
 
 ```console
-$ gwqget https://github.com/cli/cli/pull/9421
-┌ gwqget github.com/cli/cli
+$ gwqpull https://github.com/cli/cli/pull/9421
+┌ gwqpull github.com/cli/cli
 │ cloning  https://github.com/cli/cli
 │ PR #9421 [OPEN] Add --json to gh run view
 │ creating a new branch  feat/run-view-json
@@ -21,34 +21,34 @@ what the PR's head branch is called → `gwq add` → `git submodule update` →
 ## Install
 
 ```sh
-npm install -g gwqget
+npm install -g gwqpull
 ```
 
 Then add the shell integration:
 
 ```sh
 # zsh  — ~/.zshrc
-eval "$(gwqget --init zsh)"
+eval "$(gwqpull --init zsh)"
 
 # bash — ~/.bashrc
-eval "$(gwqget --init bash)"
+eval "$(gwqpull --init bash)"
 
 # fish — ~/.config/fish/config.fish
-gwqget --init fish | source
+gwqpull --init fish | source
 ```
 
-Reload the shell and `gwqget` moves it.
+Reload the shell and `gwqpull` moves it.
 
-Prefer a different name? `eval "$(gwqget --init zsh --cmd gw)"` gives you `gw`.
+Prefer a different name? `eval "$(gwqpull --init zsh --cmd gw)"` gives you `gw`.
 
 ### Without installing
 
 ```sh
-eval "$(npx -y gwqget --init zsh)"
+eval "$(npx -y gwqpull --init zsh)"
 ```
 
-The emitted function resolves its binary in three steps — `gwqget` on `PATH`,
-then the script that generated the snippet, then `npx -y gwqget@<version>` — so
+The emitted function resolves its binary in three steps — `gwqpull` on `PATH`,
+then the script that generated the snippet, then `npx -y gwqpull@<version>` — so
 it keeps working after npm garbage-collects the npx cache.
 
 Requires `git`, `ghq`, `gwq` and `fzf` on `PATH`, plus `gh` for PR URLs
@@ -96,13 +96,13 @@ the branch and the worktree already existed.
 ## Usage
 
 ```
-gwqget [options] <repo|URL|PR-URL> [branch]
+gwqpull [options] <repo|URL|PR-URL> [branch]
 ```
 
 | Option | Meaning |
 | --- | --- |
 | `--init <shell>` | print shell integration for `zsh` \| `bash` \| `fish` |
-| `--cmd <name>` | function name emitted by `--init` (default: `gwqget`) |
+| `--cmd <name>` | function name emitted by `--init` (default: `gwqpull`) |
 | `--no-fetch` | skip `git fetch` and the ff-only catch-up |
 | `--no-submodules` | skip `git submodule update --init --recursive` |
 | `-f`, `--force` | move a colliding worktree directory aside instead of failing |
@@ -125,7 +125,7 @@ PR URLs cover the three shapes that actually happen:
 ## For scripts and AI agents
 
 ```console
-$ gwqget --json -n cli/cli trunk
+$ gwqpull --json -n cli/cli trunk
 {"schemaVersion":1,"path":"/Users/you/ghq/github.com/cli/cli","branch":"trunk","clone":"/Users/you/ghq/github.com/cli/cli","repo":{"host":"github.com","owner":"cli","name":"cli","slug":"github.com/cli/cli","url":"https://github.com/cli/cli"},"pr":null,"created":false,"isMainClone":true,"cd":false}
 ```
 
@@ -136,7 +136,7 @@ Progress narrates on stderr, so stdout stays parseable. Errors go to stderr as
 JSON with stdout empty:
 
 ```console
-$ gwqget --json nobody/nothing
+$ gwqpull --json nobody/nothing
 {"schemaVersion":1,"error":{"code":"E_CLONE","message":"ghq get failed for https://github.com/nobody/nothing"},"exitCode":1}
 ```
 

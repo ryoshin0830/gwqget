@@ -12,7 +12,7 @@ const VERSION = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
 const SCHEMA_VERSION = 1;
-const PKG = 'gwqget';
+const PKG = 'gwqpull';
 const SELF = fileURLToPath(import.meta.url);
 
 const HELP = `${PKG} ${VERSION} — clone with ghq, add a gwq worktree, and cd into it.

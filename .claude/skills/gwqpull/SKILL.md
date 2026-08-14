@@ -1,5 +1,5 @@
 ---
-name: gwqget
+name: gwqpull
 description: >
   Get a repository onto disk and into a dedicated git worktree for a branch or
   pull request, cloning with ghq and creating the worktree with gwq as needed,
@@ -23,9 +23,9 @@ when_to_use: |
 allowed-tools: Bash
 ---
 
-# gwqget — clone, add a worktree, return the path
+# gwqpull — clone, add a worktree, return the path
 
-`gwqget` wraps `ghq get` + branch/PR resolution + `gwq add` + submodule init
+`gwqpull` wraps `ghq get` + branch/PR resolution + `gwq add` + submodule init
 into one call. It is idempotent: re-running lands in the same place whether or
 not the clone, branch and worktree already existed.
 
@@ -48,29 +48,29 @@ still happens and the path still comes back in the JSON.
 
 `--json` matters: it suppresses the interactive fallbacks.
 
-If `gwqget` is on PATH:
+If `gwqpull` is on PATH:
 
 ```bash
-gwqget -n --json <repo-or-url> <branch>
+gwqpull -n --json <repo-or-url> <branch>
 ```
 
 Otherwise (pin to `^0.1`, NOT `@latest`, so a future major bump does not
 silently break the flow):
 
 ```bash
-npx -y gwqget@^0.1 -n --json <repo-or-url> <branch>
+npx -y gwqpull@^0.1 -n --json <repo-or-url> <branch>
 ```
 
 ## Always name the branch
 
 Omitting the branch opens an fzf picker. Under `--json` that is not reachable,
-so gwqget exits 1 with `E_BRANCH` and lists candidates instead — recoverable,
+so gwqpull exits 1 with `E_BRANCH` and lists candidates instead — recoverable,
 but a wasted round trip. Decide the branch first:
 
 - The user named one → use it.
-- A PR URL → pass the URL alone; the PR head *is* the branch, and gwqget
+- A PR URL → pass the URL alone; the PR head *is* the branch, and gwqpull
   resolves it.
-- Neither → ask the user, or run `gwqget -n --json <repo> <default-branch>`
+- Neither → ask the user, or run `gwqpull -n --json <repo> <default-branch>`
   first and read `git -C <clone> branch -a`.
 
 ## Creating branches
@@ -141,14 +141,14 @@ Recovery:
 
 ## Things the skill must NOT do
 
-- Call gwqget without `-n --json`.
+- Call gwqpull without `-n --json`.
 - Pass `-f` without explicit user consent. It relocates a directory that may
   hold their work.
 - Pass `--no-submodules` speculatively; a repo that needs submodules will not
   build without them.
 - Retry a failed clone against a different host.
 - Assume `path != clone`. Check `isMainClone` before making changes.
-- Run `gwqget --init` to modify the user's shell config without being asked.
+- Run `gwqpull --init` to modify the user's shell config without being asked.
 - Follow up with `gwq remove` / `git worktree remove` / `git branch -D`.
 
 ## After success
