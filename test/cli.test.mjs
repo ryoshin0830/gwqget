@@ -104,7 +104,11 @@ if [ -e "$wt" ] && [ -n "$(ls -A "$wt" 2>/dev/null)" ]; then
   exit 1
 fi
 if [ "$newbranch" = "1" ]; then
-  git worktree add -b "$branch" "$wt" >/dev/null 2>&1 || exit 1
+  # Mirrors git: the branch is created while preparing, so a destination
+  # failure leaves it behind. Reproducing that is the only reason the
+  # rollback test means anything.
+  git branch "$branch" HEAD >/dev/null 2>&1
+  git worktree add "$wt" "$branch" >/dev/null 2>&1 || exit 1
 else
   git worktree add "$wt" "$branch" >/dev/null 2>&1 || exit 1
 fi
@@ -142,6 +146,9 @@ const ourStderr = (s) =>
   s.split('\n')
     .filter((l) => l && !/^\(node:\d+\)/.test(l) && !/^\(Use `node --trace-warnings/.test(l))
     .join('\n');
+
+// git that is allowed to fail — for asserting a ref is absent.
+const gitTry = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 
 const out = (r) => {
   assert.equal(r.status, 0, `exit ${r.status}\n${r.stderr}`);
@@ -448,3 +455,44 @@ for (const shell of ['zsh', 'bash', 'fish']) {
     assert.doesNotMatch(r.stderr, /file name too long|cd:/);
   });
 }
+
+// ── the half-created branch ──────────────────────────────────────────────────
+
+test('a blocked worktree rolls the half-created branch back', () => {
+  // gwq sanitises `/` to `-`, so asking for `feat-login` lands on the very
+  // directory `feat/login` already occupies — an easy collision to hit without
+  // meaning to. `git worktree add -b` creates the branch before failing on the
+  // destination, and leaving it turns the next run into "already exists".
+  resetClone();
+  out(run(['--json', '-n', '--no-fetch', 'alice/api', 'main']));
+  const collide = join(wtBase, 'feat-blocked');
+  mkdirSync(collide, { recursive: true });
+  writeFileSync(join(collide, 'stray.txt'), 'in the way\n');
+
+  const r = run(['--json', '-n', '--no-fetch', 'alice/api', 'feat/blocked']);
+  assert.equal(r.status, 1);
+  assert.equal(jsonLine(r.stderr).error.code, 'E_WORKTREE');
+  assert.equal(
+    gitTry(join(ghqRoot, SLUG), 'show-ref', '--verify', '--quiet', 'refs/heads/feat/blocked').status,
+    1, 'the branch must not survive the failure',
+  );
+  assert.ok(existsSync(join(collide, 'stray.txt')), 'the collision is left untouched without -f');
+});
+
+test('a branch that already existed is never rolled back', () => {
+  // We undo only what we made. A branch the user had may hold their work.
+  resetClone();
+  out(run(['--json', '-n', '--no-fetch', 'alice/api', 'main']));
+  const clone = join(ghqRoot, SLUG);
+  git(clone, 'branch', 'feat/mine');
+  const collide = join(wtBase, 'feat-mine');
+  mkdirSync(collide, { recursive: true });
+  writeFileSync(join(collide, 'stray.txt'), 'in the way\n');
+
+  const r = run(['--json', '-n', '--no-fetch', 'alice/api', 'feat/mine']);
+  assert.equal(r.status, 1);
+  assert.equal(
+    gitTry(clone, 'show-ref', '--verify', '--quiet', 'refs/heads/feat/mine').status,
+    0, 'never delete a branch we did not create',
+  );
+});

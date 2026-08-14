@@ -169,6 +169,25 @@ for anyone whose gwq basedir sits under a directory with a space in it; a
 pattern that ran to the colon then swallowed the branch name along with the
 path. Both orders, with and without spaces, are now tested.
 
+### I10b. Roll back only the branch this run created
+
+`git worktree add -b` creates the branch while "preparing" and then dies on an
+occupied destination, leaving a branch with no worktree. The next run then fails
+with "branch already exists" and the tool stops being idempotent.
+
+This is easy to trigger by accident because gwq sanitises `/` to `-`: asking for
+`feat-template-rate-limit` targets the directory `feat/template-rate-limit`
+already occupies. It was found exactly that way, by fat-fingering a branch name
+during a smoke test.
+
+`rollbackBranch()` deletes it — but only when the branch did not exist before
+(`known`), and only when no worktree materialised after all. A branch the user
+already had may hold their work and is never touched. Both halves are tested;
+`gwqadd` carries the same rule and the same pair of tests.
+
+The `-f` retry must also notice a leftover branch and drop `-b`, or git refuses
+to create it twice.
+
 ### I11. `--json` schema (external contract)
 
 ```json

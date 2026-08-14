@@ -918,10 +918,25 @@ function ensureWorktree(dir, branch) {
   }
 
   const known = hasLocalBranch(dir, branch) || hasRemoteBranch(dir, branch);
-  const addArgs = known ? [branch] : ['-b', branch];
+  let addArgs = known ? [branch] : ['-b', branch];
   if (!known) log(`${dim('│')} creating a new branch  ${cyan(branch)}`);
 
   let { out, status } = runGwqAdd(dir, addArgs);
+
+  // `git worktree add -b` creates the branch *before* it fails on the
+  // destination, so a failed run leaves a branch with no worktree. Left alone
+  // it turns the next attempt into "branch already exists" — and the collision
+  // is easy to hit without noticing, because gwq sanitises `/` to `-`: asking
+  // for `feat-template-rate-limit` lands on the directory `feat/template-rate-limit`
+  // already occupies. Only ever undo a branch this run created.
+  const rollbackBranch = () => {
+    if (known) return; // the user's branch, not ours to delete
+    if (!hasLocalBranch(dir, branch)) return;
+    if (worktreePath(dir, branch)) return; // it did get a worktree after all
+    if (git(dir, ['branch', '-D', branch], { stdio: 'ignore' }).status === 0) {
+      warn(`rolled back the half-created branch ${branch}`);
+    }
+  };
 
   if (status !== 0) {
     const collide = collisionPath(out, addArgs[0] === '-b');
@@ -933,8 +948,12 @@ function ensureWorktree(dir, branch) {
       try {
         renameSync(collide, aside);
       } catch (err) {
+        rollbackBranch();
         die('E_WORKTREE', `could not move ${collide} aside: ${err.message}`);
       }
+      // The first attempt may already have left the branch behind; asking git
+      // to create it a second time would just fail.
+      if (!known && hasLocalBranch(dir, branch)) addArgs = [branch];
       ({ out, status } = runGwqAdd(dir, addArgs));
     }
 
@@ -949,6 +968,7 @@ function ensureWorktree(dir, branch) {
           detail.push(`${collide} still holds ${count} entries`);
           detail.push(`inspect and remove it, or re-run with -f to move it aside`);
         }
+        rollbackBranch();
         die('E_WORKTREE', `could not create a worktree for ${branch}`, detail);
       }
       return { path: late, created: true, isMainClone: false };
@@ -959,6 +979,7 @@ function ensureWorktree(dir, branch) {
 
   const created = worktreePath(dir, branch);
   if (!created || !existsSync(created)) {
+    rollbackBranch();
     die('E_WORKTREE', `gwq add reported success but the worktree path could not be found for ${branch}`);
   }
   return { path: created, created: true, isMainClone: false };
