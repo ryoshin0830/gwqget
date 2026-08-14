@@ -523,6 +523,21 @@ function pullFastForward(wt, branch) {
   warn(`could not fast-forward to origin/${branch} — diverged, or the tree is dirty. Pull by hand.`);
 }
 
+// The path ghq already has for this slug, or '' if it has none.
+function existingClone(slug) {
+  const r = spawnSync('ghq', ['list', '-e', '-p', slug], { encoding: 'utf8' });
+  if (r.status !== 0) return '';
+  return (r.stdout ?? '').split('\n').map((l) => l.trim()).filter(Boolean)[0] ?? '';
+}
+
+// Where `ghq get` will put a new clone: the first root ghq reports.
+function primaryRoot() {
+  const r = spawnSync('ghq', ['root'], { encoding: 'utf8' });
+  const root = r.status === 0 ? (r.stdout ?? '').trim().split('\n')[0] : '';
+  if (!root) die('E_CLONE', '`ghq root` returned nothing — is ghq configured?');
+  return root;
+}
+
 // ── repository spec parsing ──────────────────────────────────────────────────
 
 // Accepts full URLs, scp-style git@host:owner/repo.git, host/owner/repo, and
@@ -709,20 +724,29 @@ function copyToClipboard(text) {
 // `git pull --ff-only` internally, which fails when the main clone is dirty or
 // has diverged. `git fetch --prune` never touches the working tree, so it is
 // safe to run over whatever state the user left behind.
-function ensureClone(dir, url) {
-  if (isRepo(dir)) {
+// Returns the directory the clone actually occupies, which is not necessarily
+// the one guessed before it existed: with several roots configured, which one
+// `ghq get` picks is ghq's business, not ours. So ask ghq again afterwards and
+// only fall back to the guess if it has nothing to say.
+function ensureClone(dir, url, slug) {
+  if (dir && isRepo(dir)) {
     log(`${dim('│')} clone exists  ${dim(dir)}`);
     if (doFetch) {
       const r = git(dir, ['fetch', '--prune', '--quiet', 'origin'], { stdio: childStdio });
       if (r.status !== 0) warn('fetch failed — carrying on with the local refs');
     }
-    return;
+    return dir;
   }
   log(`${dim('│')} cloning  ${cyan(url)}`);
   const r = spawnSync('ghq', ['get', url], { stdio: childStdio });
   if (r.signal === 'SIGINT') process.exit(130);
   if (r.status !== 0) die('E_CLONE', `ghq get failed for ${url}`);
-  if (!isRepo(dir)) die('E_CLONE', `clone did not land where expected: ${dir}`);
+
+  const landed = existingClone(slug) || dir;
+  if (!landed || !isRepo(landed)) {
+    die('E_CLONE', `ghq get reported success but no clone of ${slug} can be found`);
+  }
+  return landed;
 }
 
 // Step 2. Turn a PR number into a branch that exists locally.
@@ -787,9 +811,36 @@ async function resolvePrBranch(dir, url, prNumber, host) {
   return branch;
 }
 
-// gwq reports the git command it ran, so a collision's destination can be read
-// back out of its error text.
-const COLLISION = /git worktree add (?:-b [^ ]* )?(\/[^ :]*)/;
+// A collision's destination has to be recovered from gwq's error text. Two
+// sources, in order of reliability:
+//
+//   fatal: '<path>' already exists            <- git, quoted, unambiguous
+//   ...: git worktree add [-b <branch>] <path>: ...
+//
+// The quoted form is preferred because the command echo is not parseable in
+// general: `-b` swaps the argument order (`add -b <branch> <path>` versus
+// `add <path> <branch>`), and a path containing a space silently truncated the
+// old pattern — a gwq basedir under a directory with a space made `-f` do
+// nothing at all, without saying so.
+const COLLISION_QUOTED = /fatal: '([^']+)' already exists/;
+
+// The command echo needs to know which form was used, because `-b` swaps the
+// argument order and both a path and a branch can follow `add`:
+//
+//   gwq add -b <branch>      ->  git worktree add -b <branch> <path>: …
+//   gwq add <branch>         ->  git worktree add <path> <branch>: …
+//
+// Guessing cost real time once already: a pattern that stopped at the first
+// space read the path-first form correctly by accident, and a pattern that ran
+// to the colon swallowed the branch with it.
+const collisionFromCmd = (out, withB) => (withB
+  ? out.match(/git worktree add -b \S+ (.+?): /)
+  : out.match(/git worktree add (.+?) \S+: /))?.[1];
+
+function collisionPath(out, withB) {
+  const quoted = out.match(COLLISION_QUOTED)?.[1];
+  return (quoted ?? collisionFromCmd(out, withB) ?? '').trim();
+}
 
 function timestamp() {
   const d = new Date();
@@ -840,7 +891,7 @@ function ensureWorktree(dir, branch) {
   let { out, status } = runGwqAdd(dir, addArgs);
 
   if (status !== 0) {
-    const collide = out.match(COLLISION)?.[1] ?? '';
+    const collide = collisionPath(out, addArgs[0] === '-b');
     // gwq v0.1.1 does not forward -f to `git worktree add`, so a collision has
     // to be cleared here or not at all.
     if (collide && existsSync(collide) && force) {
@@ -891,14 +942,18 @@ async function main() {
   const slug = `${spec.host}/${spec.owner}/${spec.repo}`;
   const url = `https://${slug}`;
 
-  const rootRes = spawnSync('ghq', ['root'], { encoding: 'utf8' });
-  const root = rootRes.status === 0 ? (rootRes.stdout ?? '').trim().split('\n')[0] : '';
-  if (!root) die('E_CLONE', '`ghq root` returned nothing — is ghq configured?');
-  const dir = `${root}/${slug}`;
+  // Where the clone actually is, not where the primary root says it should be.
+  // ghq supports several roots (`ghq.root` repeated, or a colon-separated
+  // GHQ_ROOT), and `ghq root` prints only the first. Assembling the path from it
+  // made every repository under a secondary root unreachable: `ghq get` saw the
+  // clone it already had and did nothing, then this failed with "clone did not
+  // land where expected". Ask ghq where the repository is; only fall back to
+  // constructing a path for one that does not exist yet.
+  let dir = existingClone(slug) || `${primaryRoot()}/${slug}`;
 
   log(`${dim('┌')} ${bold(PKG)} ${dim(slug)}`);
 
-  ensureClone(dir, url);
+  dir = ensureClone(dir, url, slug);
 
   let branch = positionals[1] ?? spec.hint;
   if (spec.pr) branch = await resolvePrBranch(dir, url, spec.pr, spec.host);

@@ -62,10 +62,15 @@ case "$1" in
   --version) echo "ghq version 1.6.1"; exit 0 ;;
   root)      echo "${ghqRoot}"; exit 0 ;;
   list)
-    # \`list -e <owner/repo>\` — host inference. Only answer for what exists.
-    for a in "$@"; do :; done
+    # Two callers, and they want different things:
+    #   \`list -e <owner/repo>\`     -> the slug, for host inference
+    #   \`list -e -p <slug>\`        -> the path, for locating the clone
+    # Real ghq answers both; a shim that only answered the first made every
+    # clone path come back as a bare slug.
+    want_path=0
+    for a in "$@"; do [ "$a" = "-p" ] && want_path=1; done
     if [ -d "${ghqRoot}/${SLUG}" ] && [ "\${GWQGET_TEST_KNOWN:-1}" = "1" ]; then
-      echo "${SLUG}"
+      if [ "$want_path" = "1" ]; then echo "${ghqRoot}/${SLUG}"; else echo "${SLUG}"; fi
     fi
     exit 0 ;;
   get)
@@ -87,13 +92,15 @@ shift
 if [ "$1" = "-b" ]; then newbranch=1; branch="$2"; else newbranch=0; branch="$1"; fi
 slug=$(printf '%s' "$branch" | tr '/' '-')
 wt="${wtBase}/$slug"
-if [ -e "$wt" ]; then
-  echo "Error: failed to create worktree" >&2
+if [ -e "$wt" ] && [ -n "$(ls -A "$wt" 2>/dev/null)" ]; then
+  # gwq's real wording, including git's quoted fatal line — that is the line
+  # the CLI prefers, so a shim that omitted it tested the wrong branch.
   if [ "$newbranch" = "1" ]; then
-    echo "  git worktree add -b $branch $wt: destination exists" >&2
+    echo "Error: failed to add worktree: git worktree add -b $branch $wt: Preparing worktree" >&2
   else
-    echo "  git worktree add $wt $branch: destination exists" >&2
+    echo "Error: failed to add worktree: git worktree add $wt $branch: Preparing worktree" >&2
   fi
+  echo "fatal: '$wt' already exists" >&2
   exit 1
 fi
 if [ "$newbranch" = "1" ]; then
@@ -384,4 +391,27 @@ test('no branch and no TTY names the candidates instead of hanging', () => {
   const err = jsonLine(r.stderr);
   assert.equal(err.error.code, 'E_BRANCH');
   assert.match(err.error.message, /main/, 'the message must list real branches');
+});
+
+test('collision paths parse in both argument orders, spaces and all', () => {
+  // `-b` swaps the order, and a gwq basedir under a directory with a space
+  // silently broke `-f` entirely: the pattern stopped at the first space, so
+  // the path it produced did not exist and the move-aside was skipped without
+  // a word. Both forms, with and without spaces, plus git's quoted line.
+  const parse = (out, withB) => {
+    const quoted = out.match(/fatal: '([^']+)' already exists/)?.[1];
+    const cmd = (withB
+      ? out.match(/git worktree add -b \S+ (.+?): /)
+      : out.match(/git worktree add (.+?) \S+: /))?.[1];
+    return (quoted ?? cmd ?? '').trim();
+  };
+  assert.equal(parse('x: git worktree add -b feat/x /wt/feat-x: Preparing', true), '/wt/feat-x');
+  assert.equal(parse('x: git worktree add /wt/feat-x feat/x: Preparing', false), '/wt/feat-x');
+  assert.equal(parse('x: git worktree add -b feat/x /a b/feat-x: Preparing', true), '/a b/feat-x');
+  assert.equal(parse('x: git worktree add /a b/feat-x feat/x: Preparing', false), '/a b/feat-x');
+  assert.equal(parse("fatal: '/a b/feat-x' already exists", false), '/a b/feat-x');
+  // The old pattern is what this guards against.
+  assert.equal('x: git worktree add -b feat/x /a b/feat-x: p'
+    .match(/git worktree add (?:-b [^ ]* )?(\/[^ :]*)/)?.[1], '/a',
+    'the superseded pattern truncated at the space');
 });

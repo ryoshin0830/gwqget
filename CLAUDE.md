@@ -93,6 +93,18 @@ leave half-finished work. `git fetch --prune` never touches a working tree, so
 it is safe over any state. This is the single most important behavioural
 decision inherited from the zsh original.
 
+### I6b. Ask ghq where the clone is; never assemble the path
+
+`ghq.root` may be repeated and `GHQ_ROOT` may be colon-separated, but `ghq root`
+prints only the first. Building `dir` from it made every repository under a
+secondary root unreachable: `ghq get` saw a clone it already had and did
+nothing, then this died with "clone did not land where expected".
+
+`existingClone(slug)` (`ghq list -e -p`) is the source of truth, with the
+constructed path used only for a repository that does not exist yet — and
+`ensureClone()` re-resolves *after* cloning, because which root `ghq get` picks
+is ghq's business, not ours.
+
 ### I7. An existing worktree is never handed to `gwq add`
 
 That is where in-progress work lives. An existing worktree gets
@@ -130,10 +142,16 @@ has to be cleared here. With `-f` it is **renamed** to `<path>.bak-<timestamp>`.
 Without `-f` it is left alone and the error names it, says how many entries it
 holds, and points at `-f`. Never `rm` a collision — it may be someone's work.
 
-The destination path is recovered from gwq's error text, which quotes the git
-command it ran (`COLLISION` regex). If gwq changes its error format, the regex
-stops matching and `-f` silently stops working — the test for `-f` is what
-catches that.
+The destination path is recovered from gwq's error text. Prefer git's quoted
+`fatal: '<path>' already exists`; the command echo is the fallback and needs to
+be told whether `-b` was used, because that swaps the argument order
+(`add -b <branch> <path>` versus `add <path> <branch>`).
+
+Two ways this has already been got wrong: a pattern that stopped at the first
+space read the path-first form correctly *by accident* and silently broke `-f`
+for anyone whose gwq basedir sits under a directory with a space in it; a
+pattern that ran to the colon then swallowed the branch name along with the
+path. Both orders, with and without spaces, are now tested.
 
 ### I11. `--json` schema (external contract)
 
